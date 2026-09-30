@@ -1,11 +1,13 @@
 import express from "express";
 
 import {
-  upload,
+  uploadCSV,
+  uploadExcel,
   validate,
   preview,
   publish,
-  updatePublished
+  updatePublished,
+  deleteUpload
 } from "../controllers/examDepartment.controller.js";
 
 import {
@@ -13,7 +15,9 @@ import {
   authorize
 } from "../middleware/auth.middleware.js";
 
-import uploadMiddleware from "../middleware/upload.middleware.js";
+import {
+  uploadResultFile
+} from "../middleware/resultUpload.middleware.js";
 
 
 const router =
@@ -33,19 +37,27 @@ router.use(
 
 /*
 |--------------------------------------------------------------------------
+| EXAM DEPARTMENT ONLY
+|--------------------------------------------------------------------------
+*/
+
+router.use(
+  authorize(
+    "exam_department"
+  )
+);
+
+
+/*
+|--------------------------------------------------------------------------
 | UPLOAD RESULT CSV
 |--------------------------------------------------------------------------
 */
 
 router.post(
   "/upload/csv",
-  authorize(
-    "exam_department"
-  ),
-  uploadMiddleware.single(
-    "file"
-  ),
-  upload
+  uploadResultFile,
+  uploadCSV
 );
 
 
@@ -57,13 +69,8 @@ router.post(
 
 router.post(
   "/upload/excel",
-  authorize(
-    "exam_department"
-  ),
-  uploadMiddleware.single(
-    "file"
-  ),
-  upload
+  uploadResultFile,
+  uploadExcel
 );
 
 
@@ -74,10 +81,7 @@ router.post(
 */
 
 router.post(
-  "/validate/:id",
-  authorize(
-    "exam_department"
-  ),
+  "/validate/:uploadId",
   validate
 );
 
@@ -89,10 +93,7 @@ router.post(
 */
 
 router.get(
-  "/preview/:id",
-  authorize(
-    "exam_department"
-  ),
+  "/preview/:uploadId",
   preview
 );
 
@@ -104,10 +105,7 @@ router.get(
 */
 
 router.post(
-  "/publish/:id",
-  authorize(
-    "exam_department"
-  ),
+  "/publish/:uploadId",
   publish
 );
 
@@ -119,11 +117,19 @@ router.post(
 */
 
 router.put(
-  "/published/:id",
-  authorize(
-    "exam_department"
-  ),
+  "/published/:resultId",
   updatePublished
+);
+
+/*
+|--------------------------------------------------------------------------
+| DELETE UPLOADED RESULT RECORD
+|--------------------------------------------------------------------------
+*/
+
+router.delete(
+  "/upload/:uploadId",
+  deleteUpload
 );
 
 

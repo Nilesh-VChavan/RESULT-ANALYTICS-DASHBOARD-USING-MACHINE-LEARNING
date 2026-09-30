@@ -1,21 +1,12 @@
+import fs from "fs";
+import path from "path";
 import XLSX from "xlsx";
 
 import College from "../models/College.js";
-import {
-  getResultUploadModel
-} from "../models/ResultUpload.js";
-
-import {
-  getResultModel
-} from "../models/Result.js";
-
-import {
-  getStudentModel
-} from "../models/Student.js";
-
-import {
-  getSubjectModel
-} from "../models/Subject.js";
+import { getResultUploadModel } from "../models/ResultUpload.js";
+import { getResultModel } from "../models/Result.js";
+import { getStudentModel } from "../models/Student.js";
+import { getSubjectModel } from "../models/Subject.js";
 
 
 /*
@@ -45,7 +36,7 @@ async function getCollegeFromUser(
 
 /*
 |--------------------------------------------------------------------------
-| CHECK EXAM DEPARTMENT ACCESS
+| CHECK EXAM DEPARTMENT
 |--------------------------------------------------------------------------
 */
 
@@ -53,13 +44,11 @@ function checkExamDepartment(
   reqUser
 ) {
   if (
-    ![
-      "exam_department",
-      "principal"
-    ].includes(reqUser.role)
+    reqUser.role !==
+    "exam_department"
   ) {
     throw new Error(
-      "Only Exam Department or Principal can perform this operation"
+      "Only Exam Department can perform this operation"
     );
   }
 }
@@ -67,472 +56,360 @@ function checkExamDepartment(
 
 /*
 |--------------------------------------------------------------------------
-| PARSE UPLOADED FILE
+| READ CSV / EXCEL
 |--------------------------------------------------------------------------
 */
 
-function parseUploadedFile(
-  file
+function readResultFile(
+  filePath
 ) {
-  if (!file) {
-    throw new Error(
-      "Result file is required"
-    );
-  }
-
   const workbook =
-    XLSX.read(
-      file.buffer,
+    XLSX.readFile(
+      filePath,
       {
-        type: "buffer"
+        cellDates: false
       }
     );
 
+
   const sheetName =
-    workbook.SheetNames[0];
+    workbook
+      .SheetNames[0];
+
 
   if (!sheetName) {
     throw new Error(
-      "No worksheet found in uploaded file"
+      "File does not contain a worksheet"
     );
   }
+
 
   const worksheet =
     workbook.Sheets[
       sheetName
     ];
 
+
   const rows =
     XLSX.utils.sheet_to_json(
       worksheet,
       {
+        defval: "",
+        raw: false
+      }
+    );
+
+
+  const headerRows =
+    XLSX.utils.sheet_to_json(
+      worksheet,
+      {
+        header: 1,
         defval: ""
       }
     );
 
-  if (!rows.length) {
-    throw new Error(
-      "Uploaded file contains no data"
-    );
-  }
 
-  return rows;
-}
+  const headers =
+    headerRows[0] || [];
 
 
-/*
-|--------------------------------------------------------------------------
-| NORMALIZE UPLOAD ROW
-|--------------------------------------------------------------------------
-*/
-
-function normalizeRow(
-  row
-) {
   return {
-    studentId:
-      String(
-        row.studentId ??
-        row.StudentId ??
-        row.studentID ??
-        row["Student ID"] ??
-        ""
+    rows,
+    headers:
+      headers.map(
+        (header) =>
+          String(header).trim()
       )
-        .trim()
-        .toUpperCase(),
-
-    subjectCode:
-      String(
-        row.subjectCode ??
-        row.SubjectCode ??
-        row["Subject Code"] ??
-        ""
-      )
-        .trim()
-        .toUpperCase(),
-
-    academicYear:
-      String(
-        row.academicYear ??
-        row.AcademicYear ??
-        row["Academic Year"] ??
-        ""
-      ).trim(),
-
-    semester:
-      Number(
-        row.semester ??
-        row.Semester ??
-        ""
-      ),
-
-    examType:
-      String(
-        row.examType ??
-        row.ExamType ??
-        row["Exam Type"] ??
-        ""
-      ).trim(),
-
-    marksObtained:
-      Number(
-        row.marksObtained ??
-        row.MarksObtained ??
-        row["Marks Obtained"] ??
-        ""
-      ),
-
-    maxMarks:
-      Number(
-        row.maxMarks ??
-        row.MaxMarks ??
-        row["Max Marks"] ??
-        ""
-      ),
-
-    remarks:
-      String(
-        row.remarks ??
-        row.Remarks ??
-        ""
-      ).trim()
   };
 }
 
 
 /*
 |--------------------------------------------------------------------------
-| VALIDATE SINGLE ROW
+| FIND SUBJECT COLUMNS
+|--------------------------------------------------------------------------
+|
+| Any column ending with "marks" is treated as a subject
+| marks column.
+|
+| Examples:
+|
+| CS101 marks
+| CS102 marks
+| CS103 marks
+| DBMS marks
+| ML marks
+|
 |--------------------------------------------------------------------------
 */
 
-async function validateRow(
-  row,
-  rowNumber,
-  Student,
-  Subject,
-  Result
+function getSubjectColumns(
+  headers
 ) {
-  const errors = [];
+  const excludedHeaders =
+    new Set([
+      "studentid",
+      "academicyear",
+      "semester",
+      "examtype",
+      "marksobtained",
+      "maxmarks"
+    ]);
 
 
-  if (!row.studentId) {
-    errors.push(
-      "Student ID is required"
+  return headers
+    .map(
+      (header) => ({
+        original:
+          header,
+
+        normalized:
+          header
+            .toLowerCase()
+            .replace(
+              /\s+/g,
+              ""
+            )
+      })
+    )
+    .filter(
+      ({
+        original,
+        normalized
+      }) => {
+        if (
+          excludedHeaders.has(
+            normalized
+          )
+        ) {
+          return false;
+        }
+
+        return normalized.endsWith(
+          "marks"
+        );
+      }
+    )
+    .map(
+      ({
+        original
+      }) => {
+        const subjectCode =
+          original
+            .replace(
+              /\s*marks\s*$/i,
+              ""
+            )
+            .trim()
+            .toUpperCase();
+
+        return {
+          header:
+            original,
+
+          subjectCode
+        };
+      }
     );
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| GET FIXED FIELD
+|--------------------------------------------------------------------------
+*/
+
+function getRowValue(
+  row,
+  fieldName
+) {
+  const key =
+    Object.keys(row).find(
+      (key) =>
+        key
+          .toLowerCase()
+          .replace(
+            /\s+/g,
+            ""
+          ) ===
+        fieldName
+          .toLowerCase()
+          .replace(
+            /\s+/g,
+            ""
+          )
+    );
+
+
+  if (!key) {
+    return "";
   }
 
 
-  if (!row.subjectCode) {
-    errors.push(
-      "Subject code is required"
-    );
-  }
+  return row[key];
+}
 
 
-  if (!row.academicYear) {
-    errors.push(
-      "Academic year is required"
-    );
-  }
+/*
+|--------------------------------------------------------------------------
+| NUMBER VALUE
+|--------------------------------------------------------------------------
+*/
 
-
+function toNumber(
+  value
+) {
   if (
-    !row.semester ||
-    row.semester < 1 ||
-    row.semester > 8
+    value === "" ||
+    value === null ||
+    value === undefined
   ) {
-    errors.push(
-      "Semester must be between 1 and 8"
-    );
+    return NaN;
   }
 
+  const number =
+    Number(
+      String(value)
+        .replace(
+          /,/g,
+          ""
+        )
+        .trim()
+    );
 
-  const allowedExamTypes = [
-    "internal",
-    "midterm",
-    "practical",
-    "theory",
-    "end_semester",
-    "final"
+  return number;
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| VALIDATE FILE STRUCTURE
+|--------------------------------------------------------------------------
+*/
+
+function validateFileStructure(
+  headers,
+  subjectColumns
+) {
+  const requiredFields = [
+    "studentId",
+    "academicYear",
+    "semester",
+    "examType",
+    "marksObtained",
+    "maxMarks"
   ];
 
 
-  if (
-    !allowedExamTypes.includes(
-      row.examType
-    )
-  ) {
-    errors.push(
-      "Invalid exam type"
+  const normalizedHeaders =
+    headers.map(
+      (header) =>
+        header
+          .toLowerCase()
+          .replace(
+            /\s+/g,
+            ""
+          )
     );
-  }
 
 
-  if (
-    Number.isNaN(
-      row.marksObtained
-    )
+  for (
+    const field of requiredFields
   ) {
-    errors.push(
-      "Marks obtained is required"
-    );
-  }
-
-
-  if (
-    Number.isNaN(
-      row.maxMarks
-    ) ||
-    row.maxMarks <= 0
-  ) {
-    errors.push(
-      "Maximum marks must be greater than 0"
-    );
-  }
-
-
-  if (
-    !Number.isNaN(
-      row.marksObtained
-    ) &&
-    !Number.isNaN(
-      row.maxMarks
-    ) &&
-    row.marksObtained >
-      row.maxMarks
-  ) {
-    errors.push(
-      "Marks obtained cannot exceed maximum marks"
-    );
-  }
-
-
-  /*
-  |--------------------------------------------------------------------------
-  | FIND STUDENT
-  |--------------------------------------------------------------------------
-  */
-
-  let student = null;
-
-  if (row.studentId) {
-    student =
-      await Student.findOne({
-        studentId:
-          row.studentId,
-        isActive: true
-      });
-
-    if (!student) {
-      errors.push(
-        `Student not found: ${row.studentId}`
+    if (
+      !normalizedHeaders.includes(
+        field
+          .toLowerCase()
+          .replace(
+            /\s+/g,
+            ""
+          )
+      )
+    ) {
+      throw new Error(
+        `Required column missing: ${field}`
       );
     }
   }
 
 
-  /*
-  |--------------------------------------------------------------------------
-  | FIND SUBJECT
-  |--------------------------------------------------------------------------
-  */
-
-  let subject = null;
-
-  if (row.subjectCode) {
-    subject =
-      await Subject.findOne({
-        code:
-          row.subjectCode,
-        isActive: true
-      });
-
-    if (!subject) {
-      errors.push(
-        `Subject not found: ${row.subjectCode}`
-      );
-    }
-  }
-
-
-  /*
-  |--------------------------------------------------------------------------
-  | DEPARTMENT CHECK
-  |--------------------------------------------------------------------------
-  */
-
   if (
-    student &&
-    subject &&
-    student.department !==
-      subject.department
+    subjectColumns.length === 0
   ) {
-    errors.push(
-      "Student and subject belong to different departments"
+    throw new Error(
+      "No subject marks columns found. Use columns like CS101 marks, CS102 marks"
     );
   }
+}
 
 
-  /*
-  |--------------------------------------------------------------------------
-  | SEMESTER CHECK
-  |--------------------------------------------------------------------------
-  */
+/*
+|--------------------------------------------------------------------------
+| GET GRADE
+|--------------------------------------------------------------------------
+*/
 
-  if (
-    student &&
-    row.semester &&
-    student.semester !==
-      row.semester
-  ) {
-    errors.push(
-      "Result semester does not match student semester"
-    );
+function calculateGrade(
+  percentage
+) {
+  if (percentage >= 90) {
+    return {
+      grade: "A+",
+      gradePoint: 10
+    };
   }
 
-
-  if (
-    subject &&
-    row.semester &&
-    subject.semester !==
-      row.semester
-  ) {
-    errors.push(
-      "Result semester does not match subject semester"
-    );
+  if (percentage >= 80) {
+    return {
+      grade: "A",
+      gradePoint: 9
+    };
   }
 
-
-  /*
-  |--------------------------------------------------------------------------
-  | DUPLICATE RESULT CHECK
-  |--------------------------------------------------------------------------
-  */
-
-  if (
-    row.studentId &&
-    row.subjectCode &&
-    row.academicYear &&
-    row.semester &&
-    row.examType
-  ) {
-    if (student && subject) {
-      const existingResult =
-        await Result.findOne({
-          studentId:
-            row.studentId,
-
-          subjectId:
-            subject._id,
-
-          academicYear:
-            row.academicYear,
-
-          semester:
-            row.semester,
-
-          examType:
-            row.examType
-        });
-
-      if (existingResult) {
-        errors.push(
-          "Result already exists"
-        );
-      }
-    }
+  if (percentage >= 70) {
+    return {
+      grade: "B+",
+      gradePoint: 8
+    };
   }
 
+  if (percentage >= 60) {
+    return {
+      grade: "B",
+      gradePoint: 7
+    };
+  }
+
+  if (percentage >= 50) {
+    return {
+      grade: "C",
+      gradePoint: 6
+    };
+  }
+
+  if (percentage >= 40) {
+    return {
+      grade: "D",
+      gradePoint: 5
+    };
+  }
 
   return {
-    rowNumber,
-    valid:
-      errors.length === 0,
-    errors,
-    student,
-    subject
+    grade: "F",
+    gradePoint: 0
   };
 }
 
 
 /*
 |--------------------------------------------------------------------------
-| UPLOAD RESULT CSV / EXCEL
+| VALIDATE UPLOAD
 |--------------------------------------------------------------------------
 */
 
-export async function uploadResults(
-  reqUser,
-  file
-) {
-  checkExamDepartment(
-    reqUser
-  );
-
-  const college =
-    await getCollegeFromUser(
-      reqUser
-    );
-
-  const ResultUpload =
-    getResultUploadModel(
-      college.databaseName
-    );
-
-
-  const rawRows =
-    parseUploadedFile(
-      file
-    );
-
-
-  const rows =
-    rawRows.map(
-      normalizeRow
-    );
-
-
-  const extension =
-    file.originalname
-      .split(".")
-      .pop()
-      .toLowerCase();
-
-
-  const upload =
-    await ResultUpload.create({
-      fileName:
-        file.originalname,
-
-      fileType:
-        extension,
-
-      uploadedBy:
-        reqUser.sub ||
-        reqUser.userId,
-
-      status:
-        "uploaded",
-
-      totalRows:
-        rows.length,
-
-      rows
-    });
-
-
-  return upload;
-}
-
-
-/*
-|--------------------------------------------------------------------------
-| VALIDATE RESULTS
-|--------------------------------------------------------------------------
-*/
-
-export async function validateResults(
+export async function validateResultUpload(
   reqUser,
   uploadId
 ) {
@@ -540,28 +417,27 @@ export async function validateResults(
     reqUser
   );
 
+
   const college =
     await getCollegeFromUser(
       reqUser
     );
+
 
   const ResultUpload =
     getResultUploadModel(
       college.databaseName
     );
 
+
   const Student =
     getStudentModel(
       college.databaseName
     );
 
+
   const Subject =
     getSubjectModel(
-      college.databaseName
-    );
-
-  const Result =
-    getResultModel(
       college.databaseName
     );
 
@@ -579,54 +455,420 @@ export async function validateResults(
   }
 
 
-  const validationErrors = [];
+  const {
+    rows,
+    headers
+  } =
+    readResultFile(
+      upload.filePath
+    );
+
+
+  const subjectColumns =
+    getSubjectColumns(
+      headers
+    );
+
+
+  validateFileStructure(
+    headers,
+    subjectColumns
+  );
+
+
+  const validationErrors =
+    [];
+
 
   let validRows = 0;
 
 
+  const subjectCodes =
+    subjectColumns.map(
+      (item) =>
+        item.subjectCode
+    );
+
+
+  /*
+  |--------------------------------------------------------------------------
+  | LOAD SUBJECTS
+  |--------------------------------------------------------------------------
+  */
+
+  const subjects =
+    await Subject.find({
+      code: {
+        $in:
+          subjectCodes
+      },
+      isActive: true
+    });
+
+
+  const subjectMap =
+    new Map();
+
+
+  for (
+    const subject of subjects
+  ) {
+    subjectMap.set(
+      subject.code.toUpperCase(),
+      subject
+    );
+  }
+
+
+  /*
+  |--------------------------------------------------------------------------
+  | VALIDATE EACH ROW
+  |--------------------------------------------------------------------------
+  */
+
   for (
     let index = 0;
-    index < upload.rows.length;
+    index < rows.length;
     index++
   ) {
     const row =
-      upload.rows[index];
+      rows[index];
 
-    const validation =
-      await validateRow(
-        row,
-        index + 2,
-        Student,
-        Subject,
-        Result
+
+    const rowNumber =
+      index + 2;
+
+
+    const studentId =
+      String(
+        getRowValue(
+          row,
+          "studentId"
+        )
+      )
+        .trim()
+        .toUpperCase();
+
+
+    const academicYear =
+      String(
+        getRowValue(
+          row,
+          "academicYear"
+        )
+      ).trim();
+
+
+    const semester =
+      toNumber(
+        getRowValue(
+          row,
+          "semester"
+        )
       );
 
 
-    if (validation.valid) {
+    const examType =
+      String(
+        getRowValue(
+          row,
+          "examType"
+        )
+      )
+        .trim();
+
+
+    const totalMarksObtained =
+      toNumber(
+        getRowValue(
+          row,
+          "marksObtained"
+        )
+      );
+
+
+    const totalMaxMarks =
+      toNumber(
+        getRowValue(
+          row,
+          "maxMarks"
+        )
+      );
+
+
+    const errors = [];
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | STUDENT
+    |--------------------------------------------------------------------------
+    */
+
+    if (!studentId) {
+      errors.push(
+        "Student ID is required"
+      );
+    }
+
+
+    let student = null;
+
+
+    if (studentId) {
+      student =
+        await Student.findOne({
+          studentId,
+          isActive: true
+        });
+
+
+      if (!student) {
+        errors.push(
+          `Student not found: ${studentId}`
+        );
+      }
+    }
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | ACADEMIC YEAR
+    |--------------------------------------------------------------------------
+    */
+
+    if (!academicYear) {
+      errors.push(
+        "Academic year is required"
+      );
+    }
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | SEMESTER
+    |--------------------------------------------------------------------------
+    */
+
+    if (
+      Number.isNaN(
+        semester
+      ) ||
+      semester < 1 ||
+      semester > 8
+    ) {
+      errors.push(
+        "Invalid semester"
+      );
+    }
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | EXAM TYPE
+    |--------------------------------------------------------------------------
+    */
+
+    if (!examType) {
+      errors.push(
+        "Exam type is required"
+      );
+    }
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | TOTAL MARKS
+    |--------------------------------------------------------------------------
+    */
+
+    if (
+      Number.isNaN(
+        totalMarksObtained
+      )
+    ) {
+      errors.push(
+        "marksObtained is required"
+      );
+    }
+
+
+    if (
+      Number.isNaN(
+        totalMaxMarks
+      ) ||
+      totalMaxMarks <= 0
+    ) {
+      errors.push(
+        "maxMarks is required and must be greater than 0"
+      );
+    }
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | SUBJECT VALIDATION
+    |--------------------------------------------------------------------------
+    */
+
+    let calculatedMarks =
+      0;
+
+
+    let calculatedMaxMarks =
+      0;
+
+
+    for (
+      const subjectColumn
+      of subjectColumns
+    ) {
+      const subject =
+        subjectMap.get(
+          subjectColumn.subjectCode
+        );
+
+
+      if (!subject) {
+        errors.push(
+          `Subject not found or inactive: ${subjectColumn.subjectCode}`
+        );
+
+        continue;
+      }
+
+
+      if (
+        student &&
+        student.department !==
+          subject.department
+      ) {
+        errors.push(
+          `${subject.code} does not belong to student department`
+        );
+      }
+
+
+      if (
+        !Number.isNaN(
+          semester
+        ) &&
+        subject.semester !==
+          semester
+      ) {
+        errors.push(
+          `${subject.code} does not belong to semester ${semester}`
+        );
+      }
+
+
+      const marks =
+        toNumber(
+          row[
+            subjectColumn.header
+          ]
+        );
+
+
+      if (
+        Number.isNaN(
+          marks
+        )
+      ) {
+        errors.push(
+          `${subject.code} marks are required`
+        );
+
+        continue;
+      }
+
+
+      if (
+        marks < 0 ||
+        marks > 100
+      ) {
+        errors.push(
+          `${subject.code} marks must be between 0 and 100`
+        );
+
+        continue;
+      }
+
+
+      calculatedMarks +=
+        marks;
+
+      calculatedMaxMarks +=
+        100;
+    }
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | TOTAL CHECK
+    |--------------------------------------------------------------------------
+    */
+
+    if (
+      !Number.isNaN(
+        totalMarksObtained
+      ) &&
+      calculatedMarks !==
+        totalMarksObtained
+    ) {
+      errors.push(
+        `marksObtained does not match subject marks. Expected ${calculatedMarks}, received ${totalMarksObtained}`
+      );
+    }
+
+
+    if (
+      !Number.isNaN(
+        totalMaxMarks
+      ) &&
+      calculatedMaxMarks !==
+        totalMaxMarks
+    ) {
+      errors.push(
+        `maxMarks does not match subject columns. Expected ${calculatedMaxMarks}, received ${totalMaxMarks}`
+      );
+    }
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | RESULT
+    |--------------------------------------------------------------------------
+    */
+
+    if (
+      errors.length === 0
+    ) {
       validRows++;
     } else {
-      for (
-        const error of
-          validation.errors
-      ) {
-        validationErrors.push({
-          row:
-            validation.rowNumber,
-
-          message:
-            error
-        });
-      }
+      validationErrors.push({
+        row: rowNumber,
+        studentId,
+        errors
+      });
     }
   }
 
+
+  upload.totalRows =
+    rows.length;
 
   upload.validRows =
     validRows;
 
   upload.invalidRows =
-    upload.totalRows -
-    validRows;
+    validationErrors.length;
+
+  upload.headers =
+    headers;
+
+  upload.subjectCodes =
+    subjectCodes;
 
   upload.validationErrors =
     validationErrors;
@@ -634,13 +876,165 @@ export async function validateResults(
   upload.status =
     validationErrors.length === 0
       ? "validated"
-      : "failed";
+      : "invalid";
 
 
   await upload.save();
 
 
-  return upload;
+  return {
+    uploadId:
+      upload._id,
+
+    status:
+      upload.status,
+
+    totalRows:
+      upload.totalRows,
+
+    validRows:
+      upload.validRows,
+
+    invalidRows:
+      upload.invalidRows,
+
+    subjectCodes,
+
+    validationErrors
+  };
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| UPLOAD RESULT FILE
+|--------------------------------------------------------------------------
+*/
+
+export async function uploadResultFile(
+  reqUser,
+  file
+) {
+  checkExamDepartment(
+    reqUser
+  );
+
+
+  if (!file) {
+    throw new Error(
+      "CSV or Excel file is required"
+    );
+  }
+
+
+  const college =
+    await getCollegeFromUser(
+      reqUser
+    );
+
+
+  const ResultUpload =
+    getResultUploadModel(
+      college.databaseName
+    );
+
+
+  const extension =
+    path
+      .extname(
+        file.originalname
+      )
+      .toLowerCase();
+
+
+  const fileType =
+    extension === ".csv"
+      ? "csv"
+      : "excel";
+
+
+  const {
+    rows,
+    headers
+  } =
+    readResultFile(
+      file.path
+    );
+
+
+  if (
+    rows.length === 0
+  ) {
+    throw new Error(
+      "Uploaded file is empty"
+    );
+  }
+
+
+  const subjectColumns =
+    getSubjectColumns(
+      headers
+    );
+
+
+  validateFileStructure(
+    headers,
+    subjectColumns
+  );
+
+
+  const upload =
+    await ResultUpload.create({
+      fileName:
+        file.originalname,
+
+      fileType,
+
+      filePath:
+        file.path,
+
+      status:
+        "uploaded",
+
+      totalRows:
+        rows.length,
+
+      validRows: 0,
+
+      invalidRows: 0,
+
+      subjectCodes:
+        subjectColumns.map(
+          (item) =>
+            item.subjectCode
+        ),
+
+      headers,
+
+      uploadedBy:
+        reqUser.sub || null
+    });
+
+
+  return {
+    uploadId:
+      upload._id,
+
+    fileName:
+      upload.fileName,
+
+    fileType:
+      upload.fileType,
+
+    totalRows:
+      upload.totalRows,
+
+    subjectCodes:
+      upload.subjectCodes,
+
+    status:
+      upload.status
+  };
 }
 
 
@@ -658,10 +1052,12 @@ export async function previewResults(
     reqUser
   );
 
+
   const college =
     await getCollegeFromUser(
       reqUser
     );
+
 
   const ResultUpload =
     getResultUploadModel(
@@ -682,33 +1078,47 @@ export async function previewResults(
   }
 
 
+  const {
+    rows,
+    headers
+  } =
+    readResultFile(
+      upload.filePath
+    );
+
+
+  const subjectColumns =
+    getSubjectColumns(
+      headers
+    );
+
+
   return {
-    id:
+    uploadId:
       upload._id,
 
     fileName:
       upload.fileName,
 
-    fileType:
-      upload.fileType,
-
     status:
       upload.status,
 
+    headers,
+
+    subjectCodes:
+      subjectColumns.map(
+        (item) =>
+          item.subjectCode
+      ),
+
     totalRows:
-      upload.totalRows,
-
-    validRows:
-      upload.validRows,
-
-    invalidRows:
-      upload.invalidRows,
-
-    validationErrors:
-      upload.validationErrors,
+      rows.length,
 
     rows:
-      upload.rows
+      rows.slice(
+        0,
+        20
+      )
   };
 }
 
@@ -727,10 +1137,12 @@ export async function publishResults(
     reqUser
   );
 
+
   const college =
     await getCollegeFromUser(
       reqUser
     );
+
 
   const ResultUpload =
     getResultUploadModel(
@@ -766,177 +1178,323 @@ export async function publishResults(
   }
 
 
+  /*
+  |--------------------------------------------------------------------------
+  | VALIDATE BEFORE PUBLISH
+  |--------------------------------------------------------------------------
+  */
+
+  const validation =
+    await validateResultUpload(
+      reqUser,
+      uploadId
+    );
+
+
   if (
-    upload.status !==
+    validation.status !==
     "validated"
   ) {
     throw new Error(
-      "Results must be successfully validated before publishing"
+      "Cannot publish invalid results"
     );
   }
 
 
+  const {
+    rows,
+    headers
+  } =
+    readResultFile(
+      upload.filePath
+    );
+
+
+  const subjectColumns =
+    getSubjectColumns(
+      headers
+    );
+
+
+  const subjects =
+    await Subject.find({
+      code: {
+        $in:
+          subjectColumns.map(
+            (item) =>
+              item.subjectCode
+          )
+      },
+      isActive: true
+    });
+
+
+  const subjectMap =
+    new Map();
+
+
+  for (
+    const subject of subjects
+  ) {
+    subjectMap.set(
+      subject.code.toUpperCase(),
+      subject
+    );
+  }
+
+
+  const createdResults =
+    [];
+
+
   /*
   |--------------------------------------------------------------------------
-  | CREATE RESULTS
+  | PROCESS EACH STUDENT ROW
   |--------------------------------------------------------------------------
   */
 
   for (
-    const row of upload.rows
+    const row of rows
   ) {
+    const studentId =
+      String(
+        getRowValue(
+          row,
+          "studentId"
+        )
+      )
+        .trim()
+        .toUpperCase();
+
+
+    const academicYear =
+      String(
+        getRowValue(
+          row,
+          "academicYear"
+        )
+      ).trim();
+
+
+    const semester =
+      toNumber(
+        getRowValue(
+          row,
+          "semester"
+        )
+      );
+
+
+    const examType =
+      String(
+        getRowValue(
+          row,
+          "examType"
+        )
+      ).trim();
+
+
     const student =
       await Student.findOne({
-        studentId:
-          row.studentId,
+        studentId,
         isActive: true
       });
 
 
-    const subject =
-      await Subject.findOne({
-        code:
-          row.subjectCode,
-        isActive: true
-      });
-
-
-    if (
-      !student ||
-      !subject
-    ) {
-      throw new Error(
-        `Invalid student or subject for ${row.studentId} / ${row.subjectCode}`
-      );
+    if (!student) {
+      continue;
     }
 
 
-    const percentage =
-      Number(
-        (
+    /*
+    |--------------------------------------------------------------------------
+    | CREATE RESULT FOR EACH SUBJECT COLUMN
+    |--------------------------------------------------------------------------
+    */
+
+    for (
+      const subjectColumn
+      of subjectColumns
+    ) {
+      const subject =
+        subjectMap.get(
+          subjectColumn.subjectCode
+        );
+
+
+      if (!subject) {
+        continue;
+      }
+
+
+      const marks =
+        toNumber(
+          row[
+            subjectColumn.header
+          ]
+        );
+
+
+      if (
+        Number.isNaN(
+          marks
+        )
+      ) {
+        continue;
+      }
+
+
+      /*
+      |--------------------------------------------------------------------------
+      | CHECK EXISTING RESULT
+      |--------------------------------------------------------------------------
+      */
+
+      const existingResult =
+        await Result.findOne({
+          studentId:
+            student.studentId,
+
+          subjectId:
+            subject._id,
+
+          academicYear,
+
+          semester,
+
+          examType
+        });
+
+
+      const percentage =
+        Number(
           (
-            row.marksObtained /
-            row.maxMarks
-          ) * 100
-        ).toFixed(2)
+            (marks / 100) *
+            100
+          ).toFixed(2)
+        );
+
+
+      const gradeData =
+        calculateGrade(
+          percentage
+        );
+
+
+      const resultStatus =
+        percentage >= 40
+          ? "pass"
+          : "fail";
+
+
+      /*
+      |--------------------------------------------------------------------------
+      | UPDATE EXISTING
+      |--------------------------------------------------------------------------
+      */
+
+      if (existingResult) {
+        existingResult.studentName =
+          student.name;
+
+        existingResult.subjectCode =
+          subject.code;
+
+        existingResult.subjectName =
+          subject.name;
+
+        existingResult.department =
+          student.department;
+
+        existingResult.marksObtained =
+          marks;
+
+        existingResult.maxMarks =
+          100;
+
+        existingResult.percentage =
+          percentage;
+
+        existingResult.grade =
+          gradeData.grade;
+
+        existingResult.gradePoint =
+          gradeData.gradePoint;
+
+        existingResult.resultStatus =
+          resultStatus;
+
+        existingResult.isPublished =
+          true;
+
+        await existingResult.save();
+
+        createdResults.push(
+          existingResult
+        );
+
+        continue;
+      }
+
+
+      /*
+      |--------------------------------------------------------------------------
+      | CREATE NEW RESULT
+      |--------------------------------------------------------------------------
+      */
+
+      const result =
+        await Result.create({
+          studentId:
+            student.studentId,
+
+          studentName:
+            student.name,
+
+          subjectId:
+            subject._id,
+
+          subjectCode:
+            subject.code,
+
+          subjectName:
+            subject.name,
+
+          department:
+            student.department,
+
+          academicYear,
+
+          semester,
+
+          examType,
+
+          marksObtained:
+            marks,
+
+          maxMarks: 100,
+
+          percentage,
+
+          grade:
+            gradeData.grade,
+
+          gradePoint:
+            gradeData.gradePoint,
+
+          resultStatus,
+
+          remarks: "",
+
+          isPublished:
+            true
+        });
+
+
+      createdResults.push(
+        result
       );
-
-
-    let grade = "F";
-    let gradePoint = 0;
-
-
-    if (percentage >= 90) {
-      grade = "A+";
-      gradePoint = 10;
-    } else if (
-      percentage >= 80
-    ) {
-      grade = "A";
-      gradePoint = 9;
-    } else if (
-      percentage >= 70
-    ) {
-      grade = "B+";
-      gradePoint = 8;
-    } else if (
-      percentage >= 60
-    ) {
-      grade = "B";
-      gradePoint = 7;
-    } else if (
-      percentage >= 50
-    ) {
-      grade = "C";
-      gradePoint = 6;
-    } else if (
-      percentage >= 40
-    ) {
-      grade = "D";
-      gradePoint = 5;
     }
-
-
-    const resultStatus =
-      percentage >= 40
-        ? "pass"
-        : "fail";
-
-
-    const existingResult =
-      await Result.findOne({
-        studentId:
-          student.studentId,
-
-        subjectId:
-          subject._id,
-
-        academicYear:
-          row.academicYear,
-
-        semester:
-          row.semester,
-
-        examType:
-          row.examType
-      });
-
-
-    if (existingResult) {
-      throw new Error(
-        `Result already exists for ${student.studentId} - ${subject.code}`
-      );
-    }
-
-
-    await Result.create({
-      studentId:
-        student.studentId,
-
-      studentName:
-        student.name,
-
-      subjectId:
-        subject._id,
-
-      subjectCode:
-        subject.code,
-
-      subjectName:
-        subject.name,
-
-      department:
-        student.department,
-
-      academicYear:
-        row.academicYear,
-
-      semester:
-        row.semester,
-
-      examType:
-        row.examType,
-
-      marksObtained:
-        row.marksObtained,
-
-      maxMarks:
-        row.maxMarks,
-
-      percentage,
-
-      grade,
-
-      gradePoint,
-
-      resultStatus,
-
-      remarks:
-        row.remarks || "",
-
-      isPublished:
-        true
-    });
   }
 
 
@@ -955,7 +1513,25 @@ export async function publishResults(
   await upload.save();
 
 
-  return upload;
+  return {
+    uploadId:
+      upload._id,
+
+    status:
+      "published",
+
+    resultsCreated:
+      createdResults.length,
+
+    subjectCodes:
+      subjectColumns.map(
+        (item) =>
+          item.subjectCode
+      ),
+
+    publishedAt:
+      upload.publishedAt
+  };
 }
 
 
@@ -974,10 +1550,12 @@ export async function updatePublishedResult(
     reqUser
   );
 
+
   const college =
     await getCollegeFromUser(
       reqUser
     );
+
 
   const Result =
     getResultModel(
@@ -1002,141 +1580,82 @@ export async function updatePublishedResult(
     !result.isPublished
   ) {
     throw new Error(
-      "Only published results can be updated using this endpoint"
+      "Result is not published"
     );
   }
 
 
-  /*
-  |--------------------------------------------------------------------------
-  | UPDATE MARKS
-  |--------------------------------------------------------------------------
-  */
-
   if (
-    data.marksObtained !==
-    undefined
+    data.marksObtained ===
+      undefined
   ) {
-    data.marksObtained =
-      Number(
-        data.marksObtained
-      );
+    throw new Error(
+      "marksObtained is required"
+    );
   }
 
 
-  if (
-    data.maxMarks !==
-    undefined
-  ) {
-    data.maxMarks =
-      Number(
-        data.maxMarks
-      );
-  }
-
-
-  const marksObtained =
-    data.marksObtained !==
-    undefined
-      ? data.marksObtained
-      : result.marksObtained;
+  const marks =
+    Number(
+      data.marksObtained
+    );
 
 
   const maxMarks =
     data.maxMarks !==
-    undefined
-      ? data.maxMarks
+      undefined
+      ? Number(
+          data.maxMarks
+        )
       : result.maxMarks;
 
 
   if (
-    Number.isNaN(
-      marksObtained
-    ) ||
-    marksObtained < 0
+    Number.isNaN(marks) ||
+    marks < 0
   ) {
     throw new Error(
-      "Invalid marks obtained"
+      "Invalid marksObtained"
     );
   }
 
 
   if (
-    Number.isNaN(
-      maxMarks
-    ) ||
+    Number.isNaN(maxMarks) ||
     maxMarks <= 0
   ) {
     throw new Error(
-      "Invalid maximum marks"
+      "Invalid maxMarks"
     );
   }
 
 
   if (
-    marksObtained >
-    maxMarks
+    marks > maxMarks
   ) {
     throw new Error(
-      "Marks obtained cannot exceed maximum marks"
+      "Marks obtained cannot exceed max marks"
     );
   }
 
-
-  /*
-  |--------------------------------------------------------------------------
-  | RECALCULATE
-  |--------------------------------------------------------------------------
-  */
 
   const percentage =
     Number(
       (
-        (
-          marksObtained /
-          maxMarks
-        ) * 100
+        (marks / maxMarks) *
+        100
       ).toFixed(2)
     );
 
 
-  let grade = "F";
-  let gradePoint = 0;
-
-
-  if (percentage >= 90) {
-    grade = "A+";
-    gradePoint = 10;
-  } else if (
-    percentage >= 80
-  ) {
-    grade = "A";
-    gradePoint = 9;
-  } else if (
-    percentage >= 70
-  ) {
-    grade = "B+";
-    gradePoint = 8;
-  } else if (
-    percentage >= 60
-  ) {
-    grade = "B";
-    gradePoint = 7;
-  } else if (
-    percentage >= 50
-  ) {
-    grade = "C";
-    gradePoint = 6;
-  } else if (
-    percentage >= 40
-  ) {
-    grade = "D";
-    gradePoint = 5;
-  }
+  const gradeData =
+    calculateGrade(
+      percentage
+    );
 
 
   result.marksObtained =
-    marksObtained;
+    marks;
 
   result.maxMarks =
     maxMarks;
@@ -1145,10 +1664,10 @@ export async function updatePublishedResult(
     percentage;
 
   result.grade =
-    grade;
+    gradeData.grade;
 
   result.gradePoint =
-    gradePoint;
+    gradeData.gradePoint;
 
   result.resultStatus =
     percentage >= 40
@@ -1156,27 +1675,107 @@ export async function updatePublishedResult(
       : "fail";
 
 
+  /*
+  |--------------------------------------------------------------------------
+  | REMARKS ARE NOT PART OF CSV
+  |--------------------------------------------------------------------------
+  |
+  | Manual API update can still use the existing Result remarks field.
+  |
+  */
+
   if (
     data.remarks !==
-    undefined
+      undefined
   ) {
     result.remarks =
       data.remarks;
   }
 
 
-  /*
-  |--------------------------------------------------------------------------
-  | REMAIN PUBLISHED
-  |--------------------------------------------------------------------------
-  */
-
-  result.isPublished =
-    true;
-
-
   await result.save();
 
 
   return result;
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| DELETE UPLOAD FILE
+|--------------------------------------------------------------------------
+*/
+
+export async function deleteUploadFile(
+  filePath
+) {
+  try {
+    if (
+      filePath &&
+      fs.existsSync(filePath)
+    ) {
+      fs.unlinkSync(
+        filePath
+      );
+    }
+  } catch (error) {
+    console.error(
+      "Upload file cleanup failed:",
+      error.message
+    );
+  }
+}
+
+/*
+|--------------------------------------------------------------------------
+| DELETE UPLOADED RESULT RECORD
+|--------------------------------------------------------------------------
+*/
+
+export async function deleteResultUpload(
+  reqUser,
+  uploadId
+) {
+  checkExamDepartment(reqUser);
+
+  const college =
+    await getCollegeFromUser(reqUser);
+
+  const ResultUpload =
+    getResultUploadModel(
+      college.databaseName
+    );
+
+  const upload =
+    await ResultUpload.findById(
+      uploadId
+    );
+
+  if (!upload) {
+    throw new Error(
+      "Result upload not found"
+    );
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | DELETE PHYSICAL FILE
+  |--------------------------------------------------------------------------
+  */
+
+  await deleteUploadFile(
+    upload.filePath
+  );
+
+  /*
+  |--------------------------------------------------------------------------
+  | DELETE DATABASE RECORD
+  |--------------------------------------------------------------------------
+  */
+
+  await ResultUpload.findByIdAndDelete(
+    uploadId
+  );
+
+  return true;
 }

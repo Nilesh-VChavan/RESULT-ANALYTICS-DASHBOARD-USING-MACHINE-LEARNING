@@ -6,8 +6,10 @@ import {
   getCollegeById,
   getCollegeByCode,
   updateCollege,
-  setCollegeStatus
+  setCollegeStatus,
+  deleteCollegeService
 } from "../services/college.service.js";
+
 
 export async function register(req, res, next) {
   try {
@@ -23,6 +25,7 @@ export async function register(req, res, next) {
   }
 }
 
+
 export async function getAll(req, res, next) {
   try {
     const colleges = await getAllColleges();
@@ -37,6 +40,7 @@ export async function getAll(req, res, next) {
   }
 }
 
+
 export async function getById(req, res, next) {
   try {
     const college = await getCollegeById(req.params.id);
@@ -50,6 +54,7 @@ export async function getById(req, res, next) {
   }
 }
 
+
 export async function getByCode(req, res, next) {
   try {
     const college = await getCollegeByCode(req.params.code);
@@ -62,6 +67,7 @@ export async function getByCode(req, res, next) {
     next(error);
   }
 }
+
 
 export async function update(req, res, next) {
   try {
@@ -80,6 +86,7 @@ export async function update(req, res, next) {
   }
 }
 
+
 export async function activate(req, res, next) {
   try {
     const college = await setCollegeStatus(
@@ -97,6 +104,7 @@ export async function activate(req, res, next) {
   }
 }
 
+
 export async function deactivate(req, res, next) {
   try {
     const college = await setCollegeStatus(
@@ -108,6 +116,29 @@ export async function deactivate(req, res, next) {
       success: true,
       message: "College deactivated",
       data: college
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| DELETE COLLEGE
+|--------------------------------------------------------------------------
+*/
+
+export async function deleteCollege(req, res, next) {
+  try {
+    const result = await deleteCollegeService(
+      req.params.id
+    );
+
+    res.json({
+      success: true,
+      message: "College and all related records deleted successfully",
+      data: result
     });
   } catch (error) {
     next(error);

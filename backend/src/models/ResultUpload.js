@@ -13,16 +13,15 @@ const resultUploadSchema =
 
       fileType: {
         type: String,
-        required: true,
         enum: [
           "csv",
-          "xlsx",
-          "xls"
-        ]
+          "excel"
+        ],
+        required: true
       },
 
-      uploadedBy: {
-        type: mongoose.Schema.Types.ObjectId,
+      filePath: {
+        type: String,
         required: true
       },
 
@@ -31,8 +30,8 @@ const resultUploadSchema =
         enum: [
           "uploaded",
           "validated",
-          "published",
-          "failed"
+          "invalid",
+          "published"
         ],
         default: "uploaded"
       },
@@ -52,30 +51,24 @@ const resultUploadSchema =
         default: 0
       },
 
-      validationErrors: {
-        type: [
-          {
-            row: Number,
-            message: String
-          }
-        ],
+      subjectCodes: {
+        type: [String],
         default: []
       },
 
-      rows: {
-        type: [
-          {
-            studentId: String,
-            subjectCode: String,
-            academicYear: String,
-            semester: Number,
-            examType: String,
-            marksObtained: Number,
-            maxMarks: Number,
-            remarks: String
-          }
-        ],
+      headers: {
+        type: [String],
         default: []
+      },
+
+      validationErrors: {
+        type: [mongoose.Schema.Types.Mixed],
+        default: []
+      },
+
+      uploadedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        default: null
       },
 
       publishedAt: {
@@ -90,16 +83,6 @@ const resultUploadSchema =
   );
 
 
-/*
-|--------------------------------------------------------------------------
-| INDEXES
-|--------------------------------------------------------------------------
-*/
-
-resultUploadSchema.index({
-  uploadedBy: 1
-});
-
 resultUploadSchema.index({
   status: 1
 });
@@ -108,12 +91,10 @@ resultUploadSchema.index({
   createdAt: -1
 });
 
+resultUploadSchema.index({
+  uploadedBy: 1
+});
 
-/*
-|--------------------------------------------------------------------------
-| TENANT RESULT UPLOAD MODEL
-|--------------------------------------------------------------------------
-*/
 
 export function getResultUploadModel(
   databaseName

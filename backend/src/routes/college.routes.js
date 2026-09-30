@@ -9,7 +9,8 @@ import {
   getByCode,
   update,
   activate,
-  deactivate
+  deactivate,
+  deleteCollege
 } from "../controllers/college.controller.js";
 
 import {
@@ -41,5 +42,16 @@ router.put(
 router.patch("/:id/activate", activate);
 
 router.patch("/:id/deactivate", deactivate);
+
+/*
+|--------------------------------------------------------------------------
+| DELETE COLLEGE
+|--------------------------------------------------------------------------
+*/
+
+router.delete(
+  "/:id",
+  deleteCollege
+);
 
 export default router;

@@ -1,41 +1,189 @@
 import {
-  uploadResults,
-  validateResults,
+  uploadResultFile,
+  validateResultUpload,
   previewResults,
   publishResults,
-  updatePublishedResult
+  updatePublishedResult,
+  deleteResultUpload
 } from "../services/examDepartment.service.js";
 
 
 /*
 |--------------------------------------------------------------------------
-| UPLOAD RESULT FILE
+| GET UPLOADED FILE
+|--------------------------------------------------------------------------
+|
+| Multer accepts:
+| file
+| csv
+|
+| Convert either one into req.file
+|
+*/
+
+function getUploadedFile(req) {
+  if (req.file) {
+    return req.file;
+  }
+
+  if (
+    req.files &&
+    req.files.file &&
+    req.files.file.length > 0
+  ) {
+    return req.files.file[0];
+  }
+
+  if (
+    req.files &&
+    req.files.csv &&
+    req.files.csv.length > 0
+  ) {
+    return req.files.csv[0];
+  }
+
+  return null;
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| UPLOAD RESULT CSV
 |--------------------------------------------------------------------------
 */
 
-export async function upload(
+export async function uploadCSV(
   req,
   res
 ) {
   try {
-    const upload =
-      await uploadResults(
+
+    const file =
+      getUploadedFile(req);
+
+
+    if (
+      !file ||
+      !file.originalname
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "CSV file is required"
+      });
+    }
+
+
+    if (
+      !file.originalname
+        .toLowerCase()
+        .endsWith(".csv")
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "CSV file is required"
+      });
+    }
+
+
+    const result =
+      await uploadResultFile(
         req.user,
-        req.file
+        file
       );
+
 
     return res.status(201).json({
       success: true,
       message:
-        "Result file uploaded successfully",
-      upload
+        "Result CSV uploaded successfully",
+      ...result
     });
+
   } catch (error) {
+
     return res.status(400).json({
       success: false,
       message:
         error.message
     });
+
+  }
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| UPLOAD RESULT EXCEL
+|--------------------------------------------------------------------------
+*/
+
+export async function uploadExcel(
+  req,
+  res
+) {
+  try {
+
+    const file =
+      getUploadedFile(req);
+
+
+    if (
+      !file ||
+      !file.originalname
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Excel file is required"
+      });
+    }
+
+
+    const fileName =
+      file.originalname
+        .toLowerCase();
+
+
+    if (
+      !fileName.endsWith(
+        ".xlsx"
+      ) &&
+      !fileName.endsWith(
+        ".xls"
+      )
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Excel file is required"
+      });
+    }
+
+
+    const result =
+      await uploadResultFile(
+        req.user,
+        file
+      );
+
+
+    return res.status(201).json({
+      success: true,
+      message:
+        "Result Excel uploaded successfully",
+      ...result
+    });
+
+  } catch (error) {
+
+    return res.status(400).json({
+      success: false,
+      message:
+        error.message
+    });
+
   }
 }
 
@@ -51,26 +199,31 @@ export async function validate(
   res
 ) {
   try {
-    const upload =
-      await validateResults(
+
+    const result =
+      await validateResultUpload(
         req.user,
-        req.params.id
+        req.params.uploadId
       );
+
 
     return res.status(200).json({
       success: true,
       message:
-        upload.status === "validated"
+        result.invalidRows === 0
           ? "Results validated successfully"
-          : "Result validation failed",
-      upload
+          : "Result validation completed with errors",
+      ...result
     });
+
   } catch (error) {
+
     return res.status(400).json({
       success: false,
       message:
         error.message
     });
+
   }
 }
 
@@ -86,22 +239,27 @@ export async function preview(
   res
 ) {
   try {
-    const upload =
+
+    const result =
       await previewResults(
         req.user,
-        req.params.id
+        req.params.uploadId
       );
+
 
     return res.status(200).json({
       success: true,
-      upload
+      ...result
     });
+
   } catch (error) {
+
     return res.status(400).json({
       success: false,
       message:
         error.message
     });
+
   }
 }
 
@@ -117,24 +275,29 @@ export async function publish(
   res
 ) {
   try {
-    const upload =
+
+    const result =
       await publishResults(
         req.user,
-        req.params.id
+        req.params.uploadId
       );
+
 
     return res.status(200).json({
       success: true,
       message:
         "Results published successfully",
-      upload
+      ...result
     });
+
   } catch (error) {
+
     return res.status(400).json({
       success: false,
       message:
         error.message
     });
+
   }
 }
 
@@ -150,18 +313,53 @@ export async function updatePublished(
   res
 ) {
   try {
+
     const result =
       await updatePublishedResult(
         req.user,
-        req.params.id,
+        req.params.resultId,
         req.body
       );
+
 
     return res.status(200).json({
       success: true,
       message:
         "Published result updated successfully",
       result
+    });
+
+  } catch (error) {
+
+    return res.status(400).json({
+      success: false,
+      message:
+        error.message
+    });
+
+  }
+}
+
+/*
+|--------------------------------------------------------------------------
+| DELETE UPLOADED RESULT RECORD
+|--------------------------------------------------------------------------
+*/
+
+export async function deleteUpload(
+  req,
+  res
+) {
+  try {
+    await deleteResultUpload(
+      req.user,
+      req.params.uploadId
+    );
+
+    return res.status(200).json({
+      success: true,
+      message:
+        "Uploaded result record deleted successfully"
     });
   } catch (error) {
     return res.status(400).json({
