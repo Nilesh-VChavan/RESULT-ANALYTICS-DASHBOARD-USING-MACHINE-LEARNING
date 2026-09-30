@@ -13,6 +13,7 @@ import studentRoutes from "./routes/student.routes.js";
 import subjectRoutes from "./routes/subject.routes.js";
 import resultRoutes from "./routes/result.routes.js";
 import examDepartmentRoutes from "./routes/examDepartment.routes.js";
+import analyticsRoutes from "./routes/analytics.routes.js";
 
 const app = express();
 
@@ -34,6 +35,7 @@ app.use("/api/students",studentRoutes);
 app.use("/api/subjects",subjectRoutes);
 app.use("/api/results",resultRoutes);
 app.use("/api/exam-department",examDepartmentRoutes);
+app.use("/api/analytics",analyticsRoutes);
 
 app.use((req, res) => {
   res.status(404).json({
